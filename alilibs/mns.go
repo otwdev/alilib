@@ -1,36 +1,81 @@
 package alilibs
 
 import (
+	"encoding/json"
+	"encoding/xml"
+	"fmt"
+
+	"github.com/denverdino/aliyungo/mns"
+
 	"github.com/otwdev/galaxylib"
-	"github.com/weikaishio/ali_mns"
 )
 
 type Mns struct {
 	name   string
-	client ali_mns.MNSClient
+	client *mns.Client
+	queue  *mns.Queue
 }
 
-func NewMns(name string) *Mns {
+func NewMns(section string) *Mns {
 	m := &Mns{}
-	m.name = name
-	url := galaxylib.GalaxyCfgFile.MustValue("alimns", "url")
-	id := galaxylib.GalaxyCfgFile.MustValue("alimns", "id")
-	secret := galaxylib.GalaxyCfgFile.MustValue("alimns", "secret")
 
-	m.client = ali_mns.NewAliMNSClient(url, id, secret)
+	sct, _ := galaxylib.GalaxyCfgFile.GetSection(section)
+
+	m.name = sct["name"]
+	url := sct["url"]
+	id := sct["id"]
+	secret := sct["secret"]
+
+	m.client = mns.NewClient(id, secret, url)
+	m.queue = &mns.Queue{
+		Client:    m.client,
+		QueueName: m.name,
+		Base64:    false,
+	}
 
 	return m
 }
 
-func (m *Mns) Send(body string) (ret string, err error) {
+func (m *Mns) Send(body interface{}) (ret string, err error) {
 
-	msg := ali_mns.MessageSendRequest{
-		MessageBody:  []byte(body),
-		DelaySeconds: 0,
-		Priority:     8}
+	buf, _ := json.Marshal(body)
+	//body = string(buf)
 
-	queue := ali_mns.NewMNSQueue(m.name, m.client)
-	res, err := queue.SendMessage(msg)
-	ret = res.MessageId
-	return
+	//ali_mns.NewMNSQueue(m.name, m.client)
+
+	sendBody := mns.Message{
+		MessageBody: string(buf),
+	}
+
+	xmlBuf, err := xml.Marshal(sendBody)
+	if err != nil {
+		return "", err
+	}
+
+	msg, err := m.queue.Send(mns.GetCurrentUnixMicro(), xmlBuf) //queue.SendMessage(msg)
+	ret = msg.MessageId
+	return ret, err
+}
+
+func (m *Mns) Receiver(msgChan chan mns.MsgReceive, errChan chan error) {
+
+	m.queue.Receive(msgChan, errChan)
+}
+
+func (m *Mns) Delete(msgID string) {
+	errChan := make(chan error)
+	//fmt.Println(msgID)
+	go func() {
+		select {
+		case err := <-errChan:
+			{
+				if err != nil {
+					fmt.Printf("Delte error %s\n", err)
+					return
+				}
+				fmt.Println("deleted....")
+			}
+		}
+	}()
+	m.queue.Delete(msgID, errChan)
 }
